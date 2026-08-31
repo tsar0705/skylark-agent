@@ -144,10 +144,16 @@ not authorize inventing today's date.
 Use:
 - get_schema when column/dataset names need confirmation.
 - run_analysis for calculations.
+- get_execution_attention for "stuck", "Pause / struck", or
+  "Update Required" work-order questions.
 - get_data_quality_notes when missing/invalid data materially affects the
   requested answer or the user asks about quality.
 
-Prefer 1-3 tool calls.
+Prefer 1-2 tool calls.
+
+For "Which work orders are stuck or need a status update?", use
+get_execution_attention directly. Do NOT construct a multi-filter
+run_analysis call for this question.
 
 Use the smallest valid analysis that answers the question.
 
@@ -189,6 +195,22 @@ filters=[
   Deal Status equals Open
 ],
 operation=sum
+
+8A. EXECUTION ATTENTION QUERY
+
+For:
+"Which work orders are stuck or need a status update?"
+"Which WOs are stuck?"
+"Which work orders need a status update?"
+
+=> use:
+get_execution_attention
+with no arguments, or a small "limit" if needed.
+
+Do NOT call run_analysis with combined Execution Status and Billing Status
+filters for this common query.
+
+"Not Started" is not the same as "Stuck". Keep those labels distinct.
 
 9. TOOL ARGUMENTS
 Tool arguments MUST be valid JSON objects matching the supplied schema.
@@ -446,7 +468,7 @@ class Agent:
     def respond(
         self,
         conversation: list[dict],
-        max_tool_iterations: int = 4,
+        max_tool_iterations: int = 3,
     ) -> dict:
         """
         Run the conversational BI agent.
@@ -523,7 +545,7 @@ class Agent:
                     tools=self.tools,
                     tool_choice="auto",
                     temperature=0,
-                    max_tokens=900,
+                    max_tokens=700,
                 )
 
             except Exception as error:

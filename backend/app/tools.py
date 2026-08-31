@@ -217,6 +217,28 @@ TOOL_SCHEMAS = [
     },
 
     {
+        "name": "get_execution_attention",
+        "description": (
+            "Return work orders requiring execution or billing attention. "
+            "Use this for questions about work orders that are Stuck, "
+            "Pause / struck, have Billing Status = Stuck, or have "
+            "Billing Status = Update Required. "
+            "This is deterministic and should be preferred over a multi-filter "
+            "run_analysis query for execution-attention questions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of matching work orders to return."
+                }
+            },
+            "additionalProperties": False,
+        },
+    },
+
+    {
         "name": "get_data_quality_notes",
         "description": (
             "Get a summary of known data quality issues including missing "
@@ -706,6 +728,12 @@ class ToolRunner:
                 data,
             )
 
+        if tool_name == "get_execution_attention":
+            return self._get_execution_attention(
+                tool_input,
+                data,
+            )
+
         if tool_name == "get_data_quality_notes":
             return self._get_data_quality_notes(data)
 
@@ -1152,6 +1180,130 @@ class ToolRunner:
         )
 
     # ------------------------------------------------------------------
+    # Execution attention
+    # ------------------------------------------------------------------
+
+    def _get_execution_attention(
+        self,
+        request: dict,
+        data: LoadedData,
+    ) -> str:
+        """
+        Deterministically find work orders requiring execution/billing attention.
+
+        Important terminology:
+        - Execution Status = "Stuck" means execution is stuck.
+        - Execution Status = "Pause / struck" means execution is paused/struck.
+        - Billing Status = "Stuck" means the billing status is stuck.
+        - Billing Status = "Update Required" means a billing status update
+          is required.
+        - "Not Started" is reported separately and is NOT relabeled as stuck.
+        - A row is an attention item when any of the four conditions above
+          is true.
+        """
+
+        wo = data.work_orders.copy()
+
+        execution_col = _find_column(wo, "Execution Status")
+        billing_col = _find_column(wo, "Billing Status")
+
+        if execution_col is None and billing_col is None:
+            raise ToolExecutionError(
+                "Neither 'Execution Status' nor 'Billing Status' exists "
+                "in the work_orders dataset."
+            )
+
+        execution = _status_series(
+            wo,
+            "Execution Status",
+        )
+
+        billing = _status_series(
+            wo,
+            "Billing Status",
+        )
+
+        execution_stuck_mask = execution == "stuck"
+        pause_mask = execution == "pause / struck"
+        billing_stuck_mask = billing == "stuck"
+        billing_update_mask = billing == "update required"
+        not_started_mask = execution == "not started"
+
+        attention_mask = (
+            execution_stuck_mask
+            | pause_mask
+            | billing_stuck_mask
+            | billing_update_mask
+        )
+
+        matching = wo.loc[attention_mask].copy()
+
+        try:
+            limit = int(request.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+
+        limit = max(1, min(limit, 100))
+
+        # Return compact, useful fields when they exist.
+        preferred_columns = [
+            "Work Order",
+            "Work Order ID",
+            "Client",
+            "Customer",
+            "Sector",
+            "Execution Status",
+            "Billing Status",
+            "Invoice Status",
+            "WO Status (billed)",
+            "Amount Receivable (Masked)",
+            "Probable Start Date",
+            "Probable End Date",
+        ]
+
+        selected = []
+        for name in preferred_columns:
+            actual = _find_column(matching, name)
+            if actual and actual not in selected:
+                selected.append(actual)
+
+        if not selected:
+            selected = list(matching.columns[:12])
+
+        rows = matching[selected].head(limit).to_dict(
+            orient="records"
+        )
+
+        result = {
+            "dataset": "work_orders",
+            "definition": {
+                "execution_stuck": 'Execution Status equals "Stuck"',
+                "pause_or_struck": (
+                    'Execution Status equals "Pause / struck"'
+                ),
+                "billing_stuck": 'Billing Status equals "Stuck"',
+                "billing_update_required": (
+                    'Billing Status equals "Update Required"'
+                ),
+                "not_started_is_not_stuck": True,
+            },
+            "counts": {
+                "execution_stuck": int(execution_stuck_mask.sum()),
+                "pause_or_struck": int(pause_mask.sum()),
+                "billing_stuck": int(billing_stuck_mask.sum()),
+                "billing_update_required": int(
+                    billing_update_mask.sum()
+                ),
+                "not_started": int(not_started_mask.sum()),
+                "total_attention_items": int(attention_mask.sum()),
+            },
+            "rows_returned": int(len(rows)),
+            "matching_rows": rows,
+        }
+
+        return _json_result(result)
+
+    # ------------------------------------------------------------------
     # Leadership summary
     # ------------------------------------------------------------------
 
@@ -1333,10 +1485,9 @@ class ToolRunner:
         # Execution watch
         # --------------------------------------------------------------
 
-        attention_statuses = {
+        execution_attention_statuses = {
             "stuck",
             "pause / struck",
-            "update required",
             "not started",
         }
 
@@ -1350,7 +1501,7 @@ class ToolRunner:
             )
 
             for status, count in execution_counts.items():
-                if status in attention_statuses:
+                if status in execution_attention_statuses:
                     execution_attention.append(
                         {
                             "status": status,
@@ -1358,6 +1509,7 @@ class ToolRunner:
                         }
                     )
 
+        billing_stuck = int((billing == "stuck").sum())
         billing_update_required = int(
             (billing == "update required").sum()
         )
@@ -1679,6 +1831,7 @@ class ToolRunner:
 
             "execution_collections_watch": {
                 "execution_attention": execution_attention,
+                "billing_stuck": billing_stuck,
                 "billing_update_required": (
                     billing_update_required
                 ),
