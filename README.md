@@ -1,5 +1,14 @@
 # Skylark Drones — Monday.com Business Intelligence Agent
 
+## Live Application
+
+- **Hosted app:** https://tsar0705.github.io/skylark-agent/ 
+- **Backend API:** https://skylark-agent-1-ulls.onrender.com
+- **Backend health:** https://skylark-agent-1-ulls.onrender.com/health
+- **Health check:** https://skylark-agent-1-ulls.onrender.com/health/monday
+The frontend is hosted on GitHub Pages and communicates with the FastAPI
+backend deployed on Render.
+
 A conversational Business Intelligence (BI) agent for Skylark Drones that
 answers founder- and executive-level questions using live data from two
 monday.com boards:
@@ -113,20 +122,18 @@ DECISION_LOG.md
 ## Setup
 
 ### 1. Get a monday.com API token
-
 1. Log into monday.com (or create a free account).
 2. Click your avatar (top right) → **Developers**. This opens the Developer Center.
 3. Click **API token** → **Show**, and copy it.
 
 ### 2. Get a Groq API key
-
 1. Go to [console.groq.com](https://console.groq.com) and sign up or log in.
 2. Open **API Keys** → **Create API Key**.
 3. Copy the key — you won't be able to view it again after leaving the page.
 
 ### 3. Configure the backend
 
-```bash
+```
 cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate
@@ -137,7 +144,7 @@ cp .env.example .env
 
 Fill in `backend/.env`:
 
-```env
+```
 # Monday.com
 MONDAY_API_KEY=your_monday_api_key
 MONDAY_WORK_ORDERS_BOARD_ID=
@@ -145,7 +152,7 @@ MONDAY_DEALS_BOARD_ID=
 
 # Groq
 GROQ_API_KEY=your_groq_api_key
-GROQ_MODEL=openai/gpt-oss-120b
+GROQ_MODEL=openai/gpt-oss-20b
 
 # Cache
 DATA_CACHE_TTL_SECONDS=120
@@ -154,8 +161,9 @@ DATA_CACHE_TTL_SECONDS=120
 ALLOWED_ORIGINS=*
 ```
 
-`GROQ_MODEL` defaults to `openai/gpt-oss-120b` in `config.py` if unset —
-set it explicitly to whichever Groq model your account has access to.
+`config.py` has a fallback default if `GROQ_MODEL` is unset — set it
+explicitly in `.env` to whichever Groq model your account has access to
+(this project's final configuration uses `openai/gpt-oss-20b`).
 
 **Never commit `backend/.env`.** It's already in `.gitignore`. If a real
 key ever ends up in a shared file, chat log, or commit, treat it as
@@ -168,7 +176,7 @@ This creates the two boards and loads the real, uncleaned data — the
 messiness is preserved on import intentionally; `data_normalizer.py`
 cleans it at read time, which is the behavior the assignment is testing.
 
-```bash
+```
 python -m scripts.import_to_monday \
   --work-orders ../sample_data/Work_Order_Tracker_Data.xlsx \
   --deals ../sample_data/Deal_funnel_Data.xlsx
@@ -176,7 +184,7 @@ python -m scripts.import_to_monday \
 
 Copy the two printed board IDs into `.env`:
 
-```env
+```
 MONDAY_WORK_ORDERS_BOARD_ID=...
 MONDAY_DEALS_BOARD_ID=...
 ```
@@ -187,7 +195,7 @@ before running it; it permanently deletes those boards.)
 
 ### 5. Run the backend
 
-```bash
+```
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -203,13 +211,13 @@ backend URL if it isn't `http://localhost:8000`.
 
 ### 7. Try it
 
-```bash
+```
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"How many work orders are there?"}]}'
 ```
 
-```bash
+```
 curl -X POST http://localhost:8000/leadership-report \
   -H "Content-Type: application/json" \
   -d '{}'
@@ -246,6 +254,14 @@ have similar free-tier behavior.
 Vercel. Update the "API endpoint" field (or hardcode `apiBase()` in the
 file) to point at the deployed backend URL, and set `ALLOWED_ORIGINS` on
 the backend to that frontend's exact origin once you're past local testing.
+
+This project uses **GitHub Pages (frontend) + Render (backend)** as two
+separate URLs, rather than having FastAPI serve the static frontend from
+`/`. That's a normal and valid split for a static frontend + API backend,
+and the "Live Application" section above should point evaluators at the
+**GitHub Pages URL**, since that's the actual user-facing app. Don't
+switch to a single-URL architecture (FastAPI serving the frontend) this
+close to a deadline without re-testing the whole flow.
 
 ---
 
@@ -312,8 +328,8 @@ the backend to that frontend's exact origin once you're past local testing.
    a question needing a genuinely novel aggregation would need a new
    operation added to the schema and `ToolRunner`.
 5. **API rate limits.** monday.com rate-limits by account/plan; caching
-   (`DATA_CACHE_TTL_SECONDS`) reduces repeated pulls, and `import_to_monday.py`
-   paces its requests during the one-time import.
+   (`DATA_CACHE_TTL_SECONDS`) reduces repeated pulls, and
+   `import_to_monday.py` paces its requests during the one-time import.
 
 Full assumptions, trade-offs, and "what I'd do differently" are in
 `DECISION_LOG.md`.
